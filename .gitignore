@@ -1,13 +1,31 @@
+# Terraform working data and state
 .terraform/
 *.tfstate
 *.tfstate.*
+*.tfplan
+.terraform.tfstate.lock.info
+
+# Local variables and credentials
 *.tfvars
 !*.tfvars.example
 *.pem
+*.key
+.env
+.env.*
+!.env.example
+
+# Generated packages and diagnostics
+faas/*.zip
+__pycache__/
+.pytest_cache/
+*.py[cod]
 crash.log
 crash.*.log
-faas/*.zip
-.second-project-review/
-*.tfplan
+terraform-test-debug.log
+
+# Local tooling
 .agents/
 .codex/
+.second-project-review/
+.DS_Store
+Thumbs.db

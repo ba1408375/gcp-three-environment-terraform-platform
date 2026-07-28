@@ -1,30 +1,14 @@
 #######################################
-# Terraform Configuration
+# Terraform and Google Cloud provider
 #######################################
 
 terraform {
-
-  required_version = ">= 1.5"
-
-  #######################################
-  # Providers
-  #######################################
+  required_version = ">= 1.7"
 
   required_providers {
-
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 6.0"
-    }
-
-    tls = {
-      source  = "hashicorp/tls"
-      version = "~> 4.0"
-    }
-
-    local = {
-      source  = "hashicorp/local"
-      version = "~> 2.0"
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 7.0"
     }
 
     random = {
@@ -39,10 +23,7 @@ terraform {
   }
 }
 
-#######################################
-# AWS Provider
-#######################################
-
-provider "aws" {
-  region = var.aws_region
+provider "google" {
+  project = var.gcp_project_id
+  region  = var.gcp_region
 }

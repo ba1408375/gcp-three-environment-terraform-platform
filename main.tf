@@ -1,365 +1,66 @@
 #######################################
-# Ubuntu AMI
+# VM identity and administrative access
 #######################################
 
-data "aws_ami" "ubuntu" {
+locals {
+  platform_service_account_roles = toset([
+    "roles/logging.logWriter",
+    "roles/monitoring.metricWriter"
+  ])
 
-  most_recent = true
+  iap_admin_project_roles = toset([
+    "roles/compute.osAdminLogin",
+    "roles/compute.viewer",
+    "roles/iap.tunnelResourceAccessor"
+  ])
 
-  owners = ["099720109477"]
-
-  filter {
-    name = "name"
-
-    values = [
-      "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"
-    ]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
+  iap_admin_project_bindings = {
+    for binding in setproduct(var.iap_ssh_members, local.iap_admin_project_roles) :
+    "${binding[0]}|${binding[1]}" => {
+      member = binding[0]
+      role   = binding[1]
+    }
+    if var.enable_iap_ssh
   }
 }
 
-#######################################
-# SSH Key
-#######################################
+resource "google_service_account" "platform" {
+  project      = var.gcp_project_id
+  account_id   = substr("${var.project_name}-vm-${local.compact_suffix}", 0, 30)
+  display_name = "DevCloud Compute Engine runtime"
+  description  = "Least-privilege identity used by the three container-host VMs"
 
-resource "tls_private_key" "ssh" {
-
-  algorithm = "RSA"
-
-  rsa_bits = 4096
+  depends_on = [
+    google_project_service.required["iam.googleapis.com"]
+  ]
 }
 
-resource "aws_key_pair" "generated" {
+resource "google_project_iam_member" "platform" {
+  for_each = local.platform_service_account_roles
 
-  # Unique Key Pair Name
-  key_name = "${var.key_name_prefix}-${var.request_id}"
-
-  public_key = tls_private_key.ssh.public_key_openssh
+  project = var.gcp_project_id
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.platform.email}"
 }
 
-resource "local_file" "pem" {
+resource "google_project_iam_member" "iap_admin" {
+  for_each = local.iap_admin_project_bindings
 
-  # Unique PEM File
-  filename = "${var.key_name_prefix}-${var.request_id}.pem"
-
-  content = tls_private_key.ssh.private_key_pem
-
-  file_permission = "0400"
+  project = var.gcp_project_id
+  role    = each.value.role
+  member  = each.value.member
 }
 
-#######################################
-# Security Group
-#######################################
-
-resource "aws_security_group" "runtime" {
-
-  # Unique Security Group Name
-  name   = "${var.security_group_prefix}-${var.request_id}"
-  vpc_id = aws_vpc.service.id
-
-  #######################################
-  # HTTP
-  #######################################
-
-  ingress {
-
-    description = "HTTP"
-
-    from_port = 80
-    to_port   = 80
-    protocol  = "tcp"
-
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  #######################################
-  # HTTPS
-  #######################################
-
-  ingress {
-
-    description = "HTTPS"
-
-    from_port = 443
-    to_port   = 443
-    protocol  = "tcp"
-
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  #######################################
-  # Nginx
-  #######################################
-
-  ingress {
-
-    description = "Nginx"
-
-    from_port = 8080
-    to_port   = 8080
-    protocol  = "tcp"
-
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  #######################################
-  # Apache HTTP Server
-  #######################################
-
-  ingress {
-
-    description = "Apache HTTP Server"
-
-    from_port = 8081
-    to_port   = 8081
-    protocol  = "tcp"
-
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  #######################################
-  # Tomcat
-  #######################################
-
-  ingress {
-
-    description = "Tomcat"
-
-    from_port = 8082
-    to_port   = 8082
-    protocol  = "tcp"
-
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  #######################################
-  # WildFly (JBoss)
-  #######################################
-
-  ingress {
-
-    description = "WildFly"
-
-    from_port = 8083
-    to_port   = 8083
-    protocol  = "tcp"
-
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  #######################################
-  # MySQL
-  #######################################
-
-  ingress {
-
-    description = "MySQL"
-
-    from_port = 3306
-    to_port   = 3306
-    protocol  = "tcp"
-
-    cidr_blocks = [aws_vpc.service.cidr_block]
-  }
-
-  #######################################
-  # MariaDB
-  #######################################
-
-  ingress {
-
-    description = "MariaDB"
-
-    from_port = 3307
-    to_port   = 3307
-    protocol  = "tcp"
-
-    cidr_blocks = [aws_vpc.service.cidr_block]
-  }
-
-  #######################################
-  # PostgreSQL
-  #######################################
-
-  ingress {
-
-    description = "PostgreSQL"
-
-    from_port = 5432
-    to_port   = 5432
-    protocol  = "tcp"
-
-    cidr_blocks = [aws_vpc.service.cidr_block]
-  }
-
-  #######################################
-  # MongoDB
-  #######################################
-
-  ingress {
-
-    description = "MongoDB"
-
-    from_port = 27017
-    to_port   = 27017
-    protocol  = "tcp"
-
-    cidr_blocks = [aws_vpc.service.cidr_block]
-  }
-
-  #######################################
-  # Jupyter Notebook
-  #######################################
-
-  ingress {
-
-    description = "Jupyter Notebook"
-
-    from_port = 8888
-    to_port   = 8888
-    protocol  = "tcp"
-
-    cidr_blocks = [aws_vpc.service.cidr_block]
-  }
-
-  #######################################
-  # Redis
-  #######################################
-
-  ingress {
-
-    description = "Redis"
-
-    from_port = 6379
-    to_port   = 6379
-    protocol  = "tcp"
-
-    cidr_blocks = [aws_vpc.service.cidr_block]
-  }
-
-
-
-  ingress {
-    description = "Open WebUI"
-
-    from_port = 3000
-    to_port   = 3000
-    protocol  = "tcp"
-
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "EMQX MQTT"
-
-    from_port = 1883
-    to_port   = 1883
-    protocol  = "tcp"
-
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-
-
-  ingress {
-    description = "EMQX Dashboard"
-
-    from_port = 18083
-    to_port   = 18083
-    protocol  = "tcp"
-
-    cidr_blocks = [aws_vpc.service.cidr_block]
-  }
-
-  ingress {
-    description = "Remix IDE"
-
-    from_port = 8085
-    to_port   = 8085
-    protocol  = "tcp"
-
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-
-  ingress {
-    description = "PocketBase"
-
-    from_port = 8091
-    to_port   = 8091
-    protocol  = "tcp"
-
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-
-  ingress {
-    description = "Portainer"
-
-    from_port = 9000
-    to_port   = 9000
-    protocol  = "tcp"
-
-    cidr_blocks = [aws_vpc.service.cidr_block]
-  }
-
-
-  ingress {
-    description = "Blockchain (Ganache)"
-
-    from_port = 8545
-    to_port   = 8545
-    protocol  = "tcp"
-
-    cidr_blocks = [aws_vpc.service.cidr_block]
-  }
-
-
-  ingress {
-    description = "WebXR"
-
-    from_port = 8090
-    to_port   = 8090
-    protocol  = "tcp"
-
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-
-    description = "n8n"
-
-    from_port = 5678
-    to_port   = 5678
-    protocol  = "tcp"
-
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  #######################################
-  # Outbound
-  #######################################
-
-  egress {
-
-    from_port = 0
-    to_port   = 0
-    protocol  = "-1"
-
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name = "${var.security_group_prefix}-${var.request_id}"
-  }
+resource "google_service_account_iam_member" "iap_admin_service_account_user" {
+  for_each = var.enable_iap_ssh ? var.iap_ssh_members : toset([])
+
+  service_account_id = google_service_account.platform.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = each.value
 }
 
 #######################################
-# EC2 Instance
+# Combined 36-container startup script
 #######################################
 
 locals {
@@ -384,64 +85,92 @@ locals {
     })
   }
 
-  environment_user_data_base64 = {
-    for environment in keys(var.environment_instances) : environment => base64gzip(join("\n\n", [
+  environment_startup_script = {
+    for environment in keys(var.environment_instances) : environment => join("\n\n", [
       local.core_user_data[environment],
       local.platform_user_data[environment]
-    ]))
+    ])
   }
 }
 
-resource "aws_instance" "environment" {
+#######################################
+# Dev, test, and production VMs
+#######################################
+
+resource "google_compute_instance" "environment" {
   for_each = var.environment_instances
 
-  ami                         = data.aws_ami.ubuntu.id
-  instance_type               = each.value.instance_type
-  subnet_id                   = aws_subnet.environment[each.key].id
-  associate_public_ip_address = true
-  key_name                    = aws_key_pair.generated.key_name
-  iam_instance_profile        = aws_iam_instance_profile.platform.name
+  project                   = var.gcp_project_id
+  name                      = substr("${var.project_name}-${each.key}-${local.resource_suffix}", 0, 63)
+  zone                      = each.value.zone
+  machine_type              = each.value.machine_type
+  allow_stopping_for_update = true
+  can_ip_forward            = false
+  deletion_protection       = false
 
-  vpc_security_group_ids = [
-    aws_security_group.runtime.id,
-    aws_security_group.platform.id
-  ]
+  tags = [local.network_tag]
 
-  user_data_base64            = local.environment_user_data_base64[each.key]
-  user_data_replace_on_change = true
+  labels = merge(local.common_labels, {
+    environment = each.key
+    stack       = "devcloud-multi-environment"
+  })
 
-  metadata_options {
-    http_endpoint = "enabled"
-    http_tokens   = "required"
+  boot_disk {
+    auto_delete = true
+
+    initialize_params {
+      image = "ubuntu-os-cloud/ubuntu-2404-lts-amd64"
+      size  = each.value.boot_disk_size_gb
+      type  = var.boot_disk_type
+
+      labels = merge(local.common_labels, {
+        environment = each.key
+      })
+    }
   }
 
-  #######################################
-  # Root EBS Volume
-  #######################################
+  network_interface {
+    subnetwork = google_compute_subnetwork.environment[each.key].id
 
-  root_block_device {
-
-    volume_size           = each.value.root_volume_size
-    volume_type           = "gp3"
-    delete_on_termination = true
-    encrypted             = true
+    access_config {
+      nat_ip       = google_compute_address.environment[each.key].address
+      network_tier = "PREMIUM"
+    }
   }
 
-  tags = {
-    Name        = each.key
-    Environment = each.key
-    ManagedBy   = "Terraform"
-    RequestId   = var.request_id
-    Stack       = "DevCloud-Multi-Environment"
+  metadata = {
+    enable-oslogin         = "TRUE"
+    block-project-ssh-keys = "TRUE"
+  }
+
+  metadata_startup_script = local.environment_startup_script[each.key]
+
+  service_account {
+    email  = google_service_account.platform.email
+    scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+  }
+
+  shielded_instance_config {
+    enable_secure_boot          = true
+    enable_vtpm                 = true
+    enable_integrity_monitoring = true
+  }
+
+  scheduling {
+    automatic_restart   = true
+    on_host_maintenance = "MIGRATE"
+    preemptible         = false
+  }
+
+  lifecycle {
+    precondition {
+      condition     = startswith(each.value.zone, "${var.gcp_region}-")
+      error_message = "The ${each.key} zone (${each.value.zone}) must belong to gcp_region (${var.gcp_region})."
+    }
   }
 
   depends_on = [
-    aws_iam_role_policy_attachment.platform_ssm,
-    aws_route_table_association.environment
+    google_project_iam_member.platform,
+    google_compute_firewall.internal
   ]
-}
-
-moved {
-  from = aws_instance.runtime
-  to   = aws_instance.environment["production"]
 }

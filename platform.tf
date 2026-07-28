@@ -1,76 +1,21 @@
 #######################################
-# Missing-service platform
+# Added-service rendering
 #######################################
 
 locals {
-  platform_suffix = substr(lower(replace(var.request_id, "/[^a-zA-Z0-9-]/", "-")), 0, 32)
+  function_name = substr(
+    "${var.project_name}-faas-${local.resource_suffix}",
+    0,
+    63
+  )
 
-  platform_tags = {
-    Name      = "platform-services-${local.platform_suffix}"
-    ManagedBy = "Terraform"
-    Stack     = "DevCloud-Missing-Services"
-  }
+  function_url = google_cloudfunctions2_function.faas.service_config[0].uri
 
-  platform_tcp_ingress = {
-    rtmp = {
-      description = "MediaMTX RTMP"
-      from_port   = 1935
-      to_port     = 1935
-    }
-    kong = {
-      description = "Kong API proxy"
-      from_port   = 8000
-      to_port     = 8000
-    }
-    tensorflow = {
-      description = "TensorFlow Serving REST API"
-      from_port   = 8501
-      to_port     = 8501
-    }
-    mediamtx_rtsp = {
-      description = "MediaMTX RTSP"
-      from_port   = 8554
-      to_port     = 8554
-    }
-    mediamtx_hls = {
-      description = "MediaMTX HLS"
-      from_port   = 8891
-      to_port     = 8891
-    }
-    mediamtx_webrtc = {
-      description = "MediaMTX WebRTC HTTP"
-      from_port   = 8889
-      to_port     = 8889
-    }
-    ar = {
-      description = "AR static endpoint"
-      from_port   = 8092
-      to_port     = 8092
-    }
-    vr = {
-      description = "VR static endpoint"
-      from_port   = 8093
-      to_port     = 8093
-    }
-  }
-
-  platform_udp_ingress = {
-    mediamtx_rtp = {
-      description = "MediaMTX RTP and RTCP"
-      from_port   = 8000
-      to_port     = 8001
-    }
-    mediamtx_webrtc = {
-      description = "MediaMTX WebRTC ICE"
-      from_port   = 8189
-      to_port     = 8189
-    }
-    mediamtx_srt = {
-      description = "MediaMTX SRT"
-      from_port   = 8890
-      to_port     = 8890
-    }
-  }
+  faas_build_roles = toset([
+    "roles/artifactregistry.writer",
+    "roles/logging.logWriter",
+    "roles/storage.objectViewer"
+  ])
 
   platform_compose = {
     for environment in keys(var.environment_instances) : environment => templatefile("${path.module}/platform/docker-compose.yml.tftpl", {
@@ -81,7 +26,7 @@ locals {
   }
 
   platform_kong_config = templatefile("${path.module}/platform/kong.yml.tftpl", {
-    faas_url = aws_lambda_function_url.faas.function_url
+    faas_url = local.function_url
   })
 
   platform_user_data = {
@@ -106,155 +51,155 @@ resource "random_password" "platform_nifi" {
 }
 
 #######################################
-# Platform network access
+# Cloud Run function source package
 #######################################
 
-resource "aws_security_group" "platform" {
-  name_prefix            = "platform-${local.platform_suffix}-"
-  description            = "Public application ports for the missing-service platform; admin ports use SSM"
-  revoke_rules_on_delete = true
-  vpc_id                 = aws_vpc.service.id
-
-  dynamic "ingress" {
-    for_each = local.platform_tcp_ingress
-
-    content {
-      description = ingress.value.description
-      from_port   = ingress.value.from_port
-      to_port     = ingress.value.to_port
-      protocol    = "tcp"
-      cidr_blocks = var.platform_allowed_cidrs
-    }
-  }
-
-  dynamic "ingress" {
-    for_each = local.platform_udp_ingress
-
-    content {
-      description = ingress.value.description
-      from_port   = ingress.value.from_port
-      to_port     = ingress.value.to_port
-      protocol    = "udp"
-      cidr_blocks = var.platform_allowed_cidrs
-    }
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = local.platform_tags
-
-  lifecycle {
-    create_before_destroy = true
-  }
+resource "random_string" "gcp_resource_suffix" {
+  length  = 8
+  upper   = false
+  special = false
 }
-
-#######################################
-# Private administration through SSM
-#######################################
-
-resource "aws_iam_role" "platform_ssm" {
-  name = "platform-ssm-${local.platform_suffix}"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "ec2.amazonaws.com"
-      }
-      Action = "sts:AssumeRole"
-    }]
-  })
-
-  tags = local.platform_tags
-}
-
-resource "aws_iam_role_policy_attachment" "platform_ssm" {
-  role       = aws_iam_role.platform_ssm.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
-resource "aws_iam_instance_profile" "platform" {
-  name = "platform-${local.platform_suffix}"
-  role = aws_iam_role.platform_ssm.name
-
-  tags = local.platform_tags
-}
-
-#######################################
-# Function-as-a-Service on AWS Lambda
-#######################################
 
 data "archive_file" "faas" {
   type             = "zip"
-  source_file      = "${path.module}/faas/lambda_function.py"
+  source_dir       = "${path.module}/faas"
   output_file_mode = "0666"
-  output_path      = "${path.module}/faas/lambda_function.zip"
-}
-
-resource "aws_iam_role" "faas" {
-  name = "faas-${local.platform_suffix}"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "lambda.amazonaws.com"
-      }
-      Action = "sts:AssumeRole"
-    }]
-  })
-
-  tags = local.platform_tags
-}
-
-resource "aws_iam_role_policy_attachment" "faas_logs" {
-  role       = aws_iam_role.faas.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
-resource "aws_cloudwatch_log_group" "faas" {
-  name              = "/aws/lambda/devcloud-faas-${local.platform_suffix}"
-  retention_in_days = 14
-
-  tags = local.platform_tags
-}
-
-resource "aws_lambda_function" "faas" {
-  function_name = "devcloud-faas-${local.platform_suffix}"
-  description   = "Working AWS-native Function-as-a-Service endpoint"
-  role          = aws_iam_role.faas.arn
-  handler       = "lambda_function.lambda_handler"
-  runtime       = "python3.14"
-  architectures = ["x86_64"]
-
-  filename         = data.archive_file.faas.output_path
-  source_code_hash = data.archive_file.faas.output_base64sha256
-  memory_size      = 128
-  timeout          = 10
-
-  tags = local.platform_tags
-
-  depends_on = [
-    aws_cloudwatch_log_group.faas,
-    aws_iam_role_policy_attachment.faas_logs,
+  output_path      = "${path.module}/faas/function_source.zip"
+  excludes = [
+    "function_source.zip",
+    "function_app.zip",
+    "lambda_function.zip",
+    "__pycache__",
+    ".pytest_cache"
   ]
 }
 
-resource "aws_lambda_function_url" "faas" {
-  function_name      = aws_lambda_function.faas.function_name
-  authorization_type = var.faas_public_access ? "NONE" : "AWS_IAM"
+resource "google_storage_bucket" "faas_source" {
+  project                     = var.gcp_project_id
+  name                        = "${var.project_name}-faas-src-${random_string.gcp_resource_suffix.result}"
+  location                    = var.gcp_region
+  storage_class               = "STANDARD"
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  force_destroy               = true
+  labels                      = local.common_labels
 
-  cors {
-    allow_origins = ["*"]
-    allow_methods = ["GET", "POST"]
-    allow_headers = ["content-type"]
-    max_age       = 3600
+  versioning {
+    enabled = false
   }
+
+  soft_delete_policy {
+    retention_duration_seconds = 0
+  }
+
+  depends_on = [
+    google_project_service.required["storage.googleapis.com"]
+  ]
+}
+
+resource "google_storage_bucket_object" "faas_source" {
+  name         = "function-source-${data.archive_file.faas.output_md5}.zip"
+  bucket       = google_storage_bucket.faas_source.name
+  source       = data.archive_file.faas.output_path
+  content_type = "application/zip"
+}
+
+#######################################
+# Cloud Run function identity
+#######################################
+
+resource "google_service_account" "faas" {
+  project      = var.gcp_project_id
+  account_id   = substr("${var.project_name}-faas-${local.compact_suffix}", 0, 30)
+  display_name = "DevCloud Cloud Run function"
+  description  = "Runtime identity for the shared HTTP FaaS endpoint"
+
+  depends_on = [
+    google_project_service.required["iam.googleapis.com"]
+  ]
+}
+
+resource "google_project_iam_member" "faas_logging" {
+  project = var.gcp_project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.faas.email}"
+}
+
+resource "google_service_account" "faas_build" {
+  project      = var.gcp_project_id
+  account_id   = substr("${var.project_name}-build-${local.compact_suffix}", 0, 30)
+  display_name = "DevCloud function build"
+  description  = "Dedicated Cloud Build identity for packaging the shared FaaS endpoint"
+
+  depends_on = [
+    google_project_service.required["iam.googleapis.com"]
+  ]
+}
+
+resource "google_project_iam_member" "faas_build" {
+  for_each = local.faas_build_roles
+
+  project = var.gcp_project_id
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.faas_build.email}"
+}
+
+#######################################
+# Cloud Run functions (2nd gen)
+#######################################
+
+resource "google_cloudfunctions2_function" "faas" {
+  project     = var.gcp_project_id
+  name        = local.function_name
+  location    = var.gcp_region
+  description = "Working Google Cloud native Function-as-a-Service endpoint"
+  labels      = local.common_labels
+
+  build_config {
+    runtime         = var.function_python_runtime
+    entry_point     = "faas"
+    service_account = google_service_account.faas_build.name
+
+    source {
+      storage_source {
+        bucket     = google_storage_bucket.faas_source.name
+        object     = google_storage_bucket_object.faas_source.name
+        generation = google_storage_bucket_object.faas_source.generation
+      }
+    }
+  }
+
+  service_config {
+    available_memory                 = var.function_available_memory
+    timeout_seconds                  = var.function_timeout_seconds
+    min_instance_count               = 0
+    max_instance_count               = var.function_max_instance_count
+    max_instance_request_concurrency = 1
+    ingress_settings                 = "ALLOW_ALL"
+    all_traffic_on_latest_revision   = true
+    service_account_email            = google_service_account.faas.email
+
+    environment_variables = {
+      CLOUD_PROVIDER = "gcp"
+    }
+  }
+
+  depends_on = [
+    google_project_service.required["artifactregistry.googleapis.com"],
+    google_project_service.required["cloudbuild.googleapis.com"],
+    google_project_service.required["cloudfunctions.googleapis.com"],
+    google_project_service.required["run.googleapis.com"],
+    google_project_iam_member.faas_build,
+    google_project_iam_member.faas_logging
+  ]
+}
+
+resource "google_cloud_run_service_iam_member" "faas_public" {
+  count = var.function_allow_unauthenticated ? 1 : 0
+
+  project  = var.gcp_project_id
+  location = google_cloudfunctions2_function.faas.location
+  service  = google_cloudfunctions2_function.faas.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
 }

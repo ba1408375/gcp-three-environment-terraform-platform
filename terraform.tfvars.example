@@ -1,0 +1,38 @@
+# Copy this file to terraform.tfvars and replace every example value.
+# terraform.tfvars is ignored by Git because it contains secrets.
+
+gcp_project_id = "your-gcp-project-id"
+gcp_region     = "us-central1"
+project_name   = "devcloud"
+request_id     = "portfolio01"
+
+# Leave empty for a no-public-app-port posture. To test from one workstation,
+# replace 198.51.100.10 with your own public IPv4 address.
+public_service_allowed_cidrs = []
+# public_service_allowed_cidrs = ["198.51.100.10/32"]
+
+# IAP is enabled for SSH. Add your Google identity if Terraform should grant
+# the required project roles; otherwise an administrator can grant them.
+iap_ssh_members = []
+# iap_ssh_members = ["user:you@example.com"]
+
+# Direct public SSH is disabled unless trusted CIDRs are explicitly supplied.
+admin_allowed_cidrs = []
+
+mysql_root_password = "replace-with-a-long-random-password"
+mysql_database      = "app"
+mysql_user          = "appuser"
+mysql_password      = "replace-with-a-long-random-password"
+
+mariadb_root_password = "replace-with-a-long-random-password"
+mariadb_database      = "app"
+mariadb_user          = "appuser"
+mariadb_password      = "replace-with-a-long-random-password"
+
+postgres_user     = "appuser"
+postgres_password = "replace-with-a-long-random-password"
+postgres_database = "app"
+
+mongodb_user     = "appadmin"
+mongodb_password = "replace-with-a-long-random-password"
+jupyter_token    = "replace-with-a-long-random-token"

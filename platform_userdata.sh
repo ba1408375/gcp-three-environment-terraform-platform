@@ -32,20 +32,43 @@ install_platform_packages() {
     apt-get install -y docker.io docker-compose-plugin git curl ca-certificates
 }
 
+install_ops_agent() {
+  installer=/tmp/add-google-cloud-ops-agent-repo.sh
+
+  # Logging is useful but must never prevent the application platform from
+  # starting if the package repository is temporarily unavailable.
+  if curl --fail --silent --show-error \
+    https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh \
+    --output "$installer"; then
+    bash "$installer" --also-install || true
+  fi
+}
+
 export DEBIAN_FRONTEND=noninteractive
 retry 5 apt-get update -y
 retry 3 install_platform_packages
 
 systemctl enable --now docker
-usermod -aG docker ubuntu
 
-# Canonical AWS Ubuntu images usually include the SSM agent. Install the
-# snap as a fallback so the private NiFi and Kong admin ports remain reachable.
-if ! systemctl list-unit-files | grep -q amazon-ssm-agent; then
-  snap install amazon-ssm-agent --classic || true
+# Google OS Login and IAP replace static SSH keys and Session Manager. Install
+# the Google Cloud Ops Agent on a best-effort basis for bootstrap-log capture.
+install_ops_agent
+if systemctl list-unit-files | grep -q google-cloud-ops-agent; then
+  cat <<'OPS_AGENT_EOF' >/etc/google-cloud-ops-agent/config.yaml
+logging:
+  receivers:
+    devcloud_bootstrap:
+      type: files
+      include_paths:
+        - /var/log/devcloud-userdata.log
+        - /var/log/platform-userdata.log
+  service:
+    pipelines:
+      devcloud_bootstrap:
+        receivers: [devcloud_bootstrap]
+OPS_AGENT_EOF
+  systemctl restart google-cloud-ops-agent || true
 fi
-systemctl enable --now amazon-ssm-agent 2>/dev/null || \
-  systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service 2>/dev/null || true
 
 install -d -m 0755 /opt/platform/ar /opt/platform/vr /opt/platform/kong
 install -d -m 0755 /opt/platform/models /opt/platform/source

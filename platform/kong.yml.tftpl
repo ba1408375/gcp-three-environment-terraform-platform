@@ -30,7 +30,7 @@ services:
         paths: ["/video"]
         strip_path: true
 
-  - name: faas-lambda
+  - name: gcp-function
     url: ${jsonencode(faas_url)}
     routes:
       - name: faas-route

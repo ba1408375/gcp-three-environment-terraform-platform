@@ -21,7 +21,8 @@ apt-get install -y docker.io docker-compose-v2
 systemctl enable docker
 systemctl start docker
 
-usermod -aG docker ubuntu
+# Google OS Login creates administrator accounts dynamically. Administrators
+# should use `sudo docker ...`; do not assume that a local `ubuntu` user exists.
 
 ###########################################
 # Create Docker Compose Directory
@@ -354,6 +355,7 @@ volumes:
   portainer_data:
   n8n_data:
 COMPOSE_EOF
+chmod 0600 /opt/runtime/docker-compose.yml
 cat <<'EOF' >/opt/runtime/webxr/index.html
 ${webxr_index}
 EOF
